@@ -37,25 +37,10 @@ if not os.environ.get("RENDER"):
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-TEMPLATES_DIR = os.path.join(
-    BASE_DIR,
-    "templates"
-)
-
-STATIC_DIR = os.path.join(
-    BASE_DIR,
-    "static"
-)
-
-CSS_DIR = os.path.join(
-    STATIC_DIR,
-    "css"
-)
-
-JS_DIR = os.path.join(
-    STATIC_DIR,
-    "js"
-)
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+CSS_DIR = os.path.join(STATIC_DIR, "css")
+JS_DIR = os.path.join(STATIC_DIR, "js")
 
 
 # =========================================================
@@ -86,7 +71,8 @@ if os.environ.get("RENDER"):
     app.config.update(
         SESSION_COOKIE_SECURE=True,
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Lax"
+        SESSION_COOKIE_SAMESITE="None",
+        SESSION_COOKIE_PATH="/"
     )
 
 
