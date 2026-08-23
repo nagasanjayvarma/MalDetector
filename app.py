@@ -1,12 +1,8 @@
 import os
 import base64
 import re
-
 from email import policy
 from email.parser import BytesParser
-
-# Allow OAuth to work on local Flask HTTP server
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 from flask import (
     Flask,
@@ -24,12 +20,20 @@ from google.oauth2.credentials import Credentials
 
 
 # =========================================================
+# OAUTH SETTINGS
+# =========================================================
+
+# Only allow HTTP OAuth for local development.
+# Render uses HTTPS, so this is not enabled there.
+if os.environ.get("RENDER") != "true":
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+
+# =========================================================
 # PROJECT PATHS
 # =========================================================
 
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TEMPLATES_DIR = os.path.join(
     BASE_DIR,
@@ -62,7 +66,18 @@ app = Flask(
     template_folder=TEMPLATES_DIR
 )
 
-app.secret_key = "maldetector-secret-key"
+app.secret_key = os.environ.get(
+    "FLASK_SECRET_KEY",
+    "maldetector-local-secret-key"
+)
+
+# Secure cookies when running on Render
+if os.environ.get("RENDER") == "true":
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax"
+    )
 
 
 # =========================================================
@@ -72,6 +87,51 @@ app.secret_key = "maldetector-secret-key"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
 ]
+
+
+# =========================================================
+# GOOGLE OAUTH CONFIGURATION
+# =========================================================
+
+def get_google_client_config():
+    """
+    Uses Render environment variables in production.
+
+    For local development, credentials.json can still be used.
+    """
+
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+
+    if client_id and client_secret:
+        return {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url":
+                    "https://www.googleapis.com/oauth2/v1/certs"
+            }
+        }
+
+    # Local development fallback
+    credentials_path = os.path.join(
+        BASE_DIR,
+        "credentials.json"
+    )
+
+    if os.path.exists(credentials_path):
+        import json
+
+        with open(
+            credentials_path,
+            "r",
+            encoding="utf-8"
+        ) as file:
+            return json.load(file)
+
+    return None
 
 
 # =========================================================
@@ -104,7 +164,6 @@ def js_file(filename):
 
 @app.route("/")
 def home():
-
     return render_template(
         "index.html"
     )
@@ -117,26 +176,22 @@ def home():
 @app.route("/connect-gmail")
 def connect_gmail():
 
-    credentials_path = os.path.join(
-        BASE_DIR,
-        "credentials.json"
+    client_config = get_google_client_config()
+
+    if not client_config:
+        return (
+            "Google OAuth configuration was not found."
+        )
+
+    redirect_uri = url_for(
+        "oauth_callback",
+        _external=True
     )
 
-    if not os.path.exists(credentials_path):
-
-        return (
-            "credentials.json was not found. "
-            "Please place your Google OAuth credentials "
-            "file in the project folder."
-        )
-
-    flow = Flow.from_client_secrets_file(
-        credentials_path,
+    flow = Flow.from_client_config(
+        client_config,
         scopes=SCOPES,
-        redirect_uri=url_for(
-            "oauth_callback",
-            _external=True
-        )
+        redirect_uri=redirect_uri
     )
 
     authorization_url, state = flow.authorization_url(
@@ -163,32 +218,43 @@ def oauth_callback():
     state = session.get("state")
     code_verifier = session.get("code_verifier")
 
-    credentials_path = os.path.join(
-        BASE_DIR,
-        "credentials.json"
+    if not state or not code_verifier:
+        return (
+            "OAuth session expired. "
+            "Please connect Gmail again."
+        )
+
+    client_config = get_google_client_config()
+
+    if not client_config:
+        return (
+            "Google OAuth configuration was not found."
+        )
+
+    redirect_uri = url_for(
+        "oauth_callback",
+        _external=True
     )
 
-    if not os.path.exists(credentials_path):
-
-        return (
-            "credentials.json was not found."
-        )
-
-    flow = Flow.from_client_secrets_file(
-        credentials_path,
+    flow = Flow.from_client_config(
+        client_config,
         scopes=SCOPES,
         state=state,
-        redirect_uri=url_for(
-            "oauth_callback",
-            _external=True
-        )
+        redirect_uri=redirect_uri
     )
 
     flow.code_verifier = code_verifier
 
-    flow.fetch_token(
-        authorization_response=request.url
-    )
+    try:
+        flow.fetch_token(
+            authorization_response=request.url
+        )
+    except Exception as error:
+        return (
+            "Unable to complete Google authentication."
+            "<br><br>"
+            f"Error: {error}"
+        )
 
     credentials = flow.credentials
 
@@ -197,18 +263,56 @@ def oauth_callback():
         "token.json"
     )
 
-    with open(
-        token_path,
-        "w"
-    ) as token:
+    try:
+        with open(
+            token_path,
+            "w",
+            encoding="utf-8"
+        ) as token:
 
-        token.write(
-            credentials.to_json()
+            token.write(
+                credentials.to_json()
+            )
+
+    except Exception as error:
+        return (
+            "Unable to save Gmail authentication."
+            "<br><br>"
+            f"Error: {error}"
         )
+
+    session.pop("state", None)
+    session.pop("code_verifier", None)
 
     return redirect(
         url_for("gmail")
     )
+
+
+# =========================================================
+# LOAD GMAIL CREDENTIALS
+# =========================================================
+
+def get_gmail_credentials():
+
+    token_path = os.path.join(
+        BASE_DIR,
+        "token.json"
+    )
+
+    if not os.path.exists(token_path):
+        return None
+
+    try:
+        credentials = Credentials.from_authorized_user_file(
+            token_path,
+            SCOPES
+        )
+
+        return credentials
+
+    except Exception:
+        return None
 
 
 # =========================================================
@@ -218,23 +322,14 @@ def oauth_callback():
 @app.route("/gmail")
 def gmail():
 
-    token_path = os.path.join(
-        BASE_DIR,
-        "token.json"
-    )
+    credentials = get_gmail_credentials()
 
-    if not os.path.exists(token_path):
-
+    if not credentials:
         return redirect(
             url_for("connect_gmail")
         )
 
     try:
-
-        credentials = Credentials.from_authorized_user_file(
-            token_path,
-            SCOPES
-        )
 
         service = build(
             "gmail",
@@ -264,7 +359,8 @@ def gmail():
     except Exception as error:
 
         return (
-            "Unable to access Gmail.<br><br>"
+            "Unable to access Gmail."
+            "<br><br>"
             f"Error: {error}"
         )
 
@@ -326,19 +422,13 @@ def gmail():
                     ]
 
             email_list.append({
-
                 "id": message["id"],
-
                 "sender": sender,
-
                 "subject": subject,
-
                 "date": date
-
             })
 
         except Exception:
-
             continue
 
     next_page_token = results.get(
@@ -356,28 +446,17 @@ def gmail():
 # SELECT ONE GMAIL EMAIL
 # =========================================================
 
-@app.route(
-    "/gmail/email/<message_id>"
-)
+@app.route("/gmail/email/<message_id>")
 def select_gmail_email(message_id):
 
-    token_path = os.path.join(
-        BASE_DIR,
-        "token.json"
-    )
+    credentials = get_gmail_credentials()
 
-    if not os.path.exists(token_path):
-
+    if not credentials:
         return redirect(
             url_for("connect_gmail")
         )
 
     try:
-
-        credentials = Credentials.from_authorized_user_file(
-            token_path,
-            SCOPES
-        )
 
         service = build(
             "gmail",
@@ -394,7 +473,8 @@ def select_gmail_email(message_id):
     except Exception as error:
 
         return (
-            "Unable to retrieve this email.<br><br>"
+            "Unable to retrieve this email."
+            "<br><br>"
             f"Error: {error}"
         )
 
@@ -436,12 +516,6 @@ def select_gmail_email(message_id):
             "Email body could not be extracted."
         )
 
-    # =====================================================
-    # IMPORTANT:
-    # Selected Gmail email now opens the SEPARATE
-    # ANALYZE PAGE instead of index.html
-    # =====================================================
-
     return render_template(
         "analyze.html",
         sender=sender,
@@ -467,7 +541,6 @@ def extract_email_body(payload):
                 ""
             )
 
-            # Plain text email
             if mime_type == "text/plain":
 
                 data = part.get(
@@ -487,10 +560,8 @@ def extract_email_body(payload):
                     )
 
                 if body:
-
                     break
 
-            # Multipart email
             elif mime_type.startswith(
                 "multipart/"
             ):
@@ -500,7 +571,6 @@ def extract_email_body(payload):
                 )
 
                 if body:
-
                     break
 
     else:
@@ -539,24 +609,15 @@ def upload_email():
     )
 
     if not uploaded_file:
-
-        return (
-            "No file selected."
-        )
+        return "No file selected."
 
     if uploaded_file.filename == "":
-
-        return (
-            "No file selected."
-        )
+        return "No file selected."
 
     if not uploaded_file.filename.lower().endswith(
         ".eml"
     ):
-
-        return (
-            "Only .eml files are allowed."
-        )
+        return "Only .eml files are allowed."
 
     try:
 
@@ -571,7 +632,8 @@ def upload_email():
     except Exception as error:
 
         return (
-            "Unable to read the .eml file.<br><br>"
+            "Unable to read the .eml file."
+            "<br><br>"
             f"Error: {error}"
         )
 
@@ -587,10 +649,6 @@ def upload_email():
 
     body = ""
 
-    # =====================================================
-    # MULTIPART EMAIL
-    # =====================================================
-
     if msg.is_multipart():
 
         for part in msg.walk():
@@ -598,29 +656,20 @@ def upload_email():
             if part.get_content_type() == "text/plain":
 
                 try:
-
                     body = part.get_content()
 
                 except Exception:
-
                     body = ""
 
                 if body:
-
                     break
-
-    # =====================================================
-    # NORMAL EMAIL
-    # =====================================================
 
     else:
 
         try:
-
             body = msg.get_content()
 
         except Exception:
-
             body = ""
 
     if not body:
@@ -628,11 +677,6 @@ def upload_email():
         body = (
             "Email body could not be extracted."
         )
-
-    # =====================================================
-    # UPLOADED EMAIL ALSO OPENS THE SEPARATE
-    # ANALYZE PAGE
-    # =====================================================
 
     return render_template(
         "analyze.html",
@@ -668,7 +712,6 @@ def analyze():
     )
 
     score = 0
-
     reasons = []
 
     text = email_text.lower()
@@ -679,7 +722,6 @@ def analyze():
     # =====================================================
 
     urgency_words = [
-
         "urgent",
         "immediately",
         "limited time",
@@ -688,7 +730,6 @@ def analyze():
         "deadline",
         "hurry",
         "last chance"
-
     ]
 
     for word in urgency_words:
@@ -707,7 +748,6 @@ def analyze():
     # =====================================================
 
     payment_words = [
-
         "payment",
         "pay",
         "invoice",
@@ -718,7 +758,6 @@ def analyze():
         "bank account",
         "credit card",
         "debit card"
-
     ]
 
     for word in payment_words:
@@ -737,7 +776,6 @@ def analyze():
     # =====================================================
 
     credential_words = [
-
         "password",
         "verify your account",
         "login",
@@ -746,7 +784,6 @@ def analyze():
         "otp",
         "verification code",
         "credentials"
-
     ]
 
     for word in credential_words:
@@ -783,14 +820,12 @@ def analyze():
     # =====================================================
 
     shorteners = [
-
         "bit.ly",
         "tinyurl.com",
         "t.co",
         "goo.gl",
         "ow.ly",
         "is.gd"
-
     ]
 
     for shortener in shorteners:
@@ -809,7 +844,6 @@ def analyze():
     # =====================================================
 
     malware_words = [
-
         "malware",
         "virus",
         "trojan",
@@ -817,7 +851,6 @@ def analyze():
         "infected",
         "suspicious attachment",
         "download attachment"
-
     ]
 
     for word in malware_words:
@@ -841,14 +874,9 @@ def analyze():
     )
 
 
-    # =====================================================
-    # LEVEL CLASS + NAME + DESCRIPTION
-    # =====================================================
-
     if score <= 24:
 
         level_class = "low"
-
         threat_name = "Low Risk"
 
         threat_description = (
@@ -861,7 +889,6 @@ def analyze():
     elif score <= 49:
 
         level_class = "suspicious"
-
         threat_name = "Suspicious"
 
         threat_description = (
@@ -874,7 +901,6 @@ def analyze():
     elif score <= 74:
 
         level_class = "high"
-
         threat_name = "High Risk"
 
         threat_description = (
@@ -886,7 +912,6 @@ def analyze():
     else:
 
         level_class = "critical"
-
         threat_name = "Critical Threat"
 
         threat_description = (
@@ -921,65 +946,28 @@ def analyze():
 if __name__ == "__main__":
 
     print()
-
-    print(
-        "======================================"
-    )
-
-    print(
-        "       MalDetector Starting..."
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("======================================")
+    print("       MalDetector Starting...")
+    print("======================================")
     print()
 
-    print(
-        "Project folder:"
-    )
-
-    print(
-        BASE_DIR
-    )
+    print("Project folder:")
+    print(BASE_DIR)
 
     print()
-
-    print(
-        "Templates folder:"
-    )
-
-    print(
-        TEMPLATES_DIR
-    )
+    print("Templates folder:")
+    print(TEMPLATES_DIR)
 
     print()
-
-    print(
-        "Static folder:"
-    )
-
-    print(
-        STATIC_DIR
-    )
+    print("Static folder:")
+    print(STATIC_DIR)
 
     print()
-
-    print(
-        "CSS folder:"
-    )
-
-    print(
-        CSS_DIR
-    )
+    print("CSS folder:")
+    print(CSS_DIR)
 
     print()
-
-    print(
-        "CSS file:"
-    )
-
+    print("CSS file:")
     print(
         os.path.join(
             CSS_DIR,
@@ -988,11 +976,7 @@ if __name__ == "__main__":
     )
 
     print()
-
-    print(
-        "CSS file exists:"
-    )
-
+    print("CSS file exists:")
     print(
         os.path.exists(
             os.path.join(
@@ -1003,11 +987,7 @@ if __name__ == "__main__":
     )
 
     print()
-
-    print(
-        "======================================"
-    )
-
+    print("======================================")
     print()
 
     app.run(
