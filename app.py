@@ -14,6 +14,8 @@ from flask import (
     send_from_directory,
 )
 
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -66,7 +68,14 @@ app = Flask(
     template_folder=TEMPLATES_DIR
 )
 
-# Your existing Flask secret key setup — DO NOT CHANGE
+# Trust Render's HTTPS reverse proxy
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_proto=1,
+    x_host=1
+)
+
+# Flask secret key
 app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY",
     "maldetector-local-secret-key"
