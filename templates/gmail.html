@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>MalDetector - Select Email</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('css_file', filename='style.css') }}"
+    >
+
+</head>
+
+
+<body>
+
+<div class="gmail-page">
+
+
+    <!-- =====================================================
+         HEADER
+         ===================================================== -->
+
+    <header class="gmail-header">
+
+        <div class="gmail-title">
+
+            <h1>🛡️ MalDetector</h1>
+
+            <p>
+                Select an email to analyze
+            </p>
+
+        </div>
+
+
+        <a
+            href="{{ url_for('home') }}"
+            class="back-button"
+        >
+            ← Back
+        </a>
+
+    </header>
+
+
+    <!-- =====================================================
+         EMAIL LIST
+         ===================================================== -->
+
+    <main class="email-container">
+
+        {% if emails %}
+
+            {% for email in emails %}
+
+            <div class="email-card">
+
+
+                <!-- EMAIL ICON -->
+
+                <div class="email-icon">
+
+                    ✉️
+
+                </div>
+
+
+                <!-- EMAIL INFORMATION -->
+
+                <div class="email-content">
+
+
+                    <div class="email-sender">
+
+                        {{ email.sender }}
+
+                    </div>
+
+
+                    <div class="email-subject">
+
+                        {{ email.subject }}
+
+                    </div>
+
+
+                    <div class="email-date">
+
+                        {{ email.date }}
+
+                    </div>
+
+
+                </div>
+
+
+                <!-- SELECT BUTTON -->
+
+                <div class="email-action">
+
+                    <a
+                        href="{{ url_for(
+                            'select_gmail_email',
+                            message_id=email.id
+                        ) }}"
+                        class="select-email-button"
+                    >
+                        Select
+                    </a>
+
+                </div>
+
+
+            </div>
+
+            {% endfor %}
+
+
+        {% else %}
+
+
+            <!-- EMPTY STATE -->
+
+            <div class="empty-state">
+
+                <div class="empty-icon">
+                    📭
+                </div>
+
+                <h2>
+                    No Emails Found
+                </h2>
+
+                <p>
+                    We couldn't find any emails
+                    in this mailbox.
+                </p>
+
+            </div>
+
+
+        {% endif %}
+
+    </main>
+
+
+    <!-- =====================================================
+         LOAD MORE
+         ===================================================== -->
+
+    {% if next_page_token %}
+
+    <div class="load-more">
+
+        <a
+            href="{{ url_for(
+                'gmail',
+                page_token=next_page_token
+            ) }}"
+            class="load-button"
+        >
+            Load More Emails
+        </a>
+
+    </div>
+
+    {% endif %}
+
+
+    <!-- =====================================================
+         FOOTER
+         ===================================================== -->
+
+    <footer class="gmail-footer">
+
+        <p>
+            🔐 Your email is analyzed only when
+            you select it.
+        </p>
+
+    </footer>
+
+
+</div>
+
+</body>
+
+</html>

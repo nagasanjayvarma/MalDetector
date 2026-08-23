@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>MalDetector - Analysis Results</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('css_file', filename='style.css') }}"
+    >
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <!-- HEADER -->
+
+    <div class="header">
+
+        <h1>🛡️ MalDetector</h1>
+
+        <p>
+            Email Threat Analysis Report
+        </p>
+
+    </div>
+
+
+    <!-- MAIN RESULT -->
+
+    <div class="result-card">
+
+        <div class="result-layout">
+
+            <!-- CIRCULAR GAUGE -->
+
+            <div class="gauge-wrapper">
+
+                <div
+                    class="threat-gauge {{ level_class }}"
+                    style="--progress: {{ score }}%;"
+                >
+
+                    <div class="gauge-content">
+
+                        <div class="score">
+                            {{ score }}
+                        </div>
+
+                        <div class="score-label">
+                            THREAT SCORE
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- THREAT RESULT -->
+
+            <div class="threat-info">
+
+                <h2 class="{{ level_class }}-text">
+                    {{ threat_name }}
+                </h2>
+
+                <p class="threat-description">
+                    {{ threat_description }}
+                </p>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- EMAIL INFORMATION -->
+
+    <div class="email-details">
+
+        <h2>
+            📧 Email Information
+        </h2>
+
+        <div class="detail">
+
+            <strong>
+                From:
+            </strong>
+
+            {{ sender or "Unknown sender" }}
+
+        </div>
+
+
+        <div class="detail">
+
+            <strong>
+                Subject:
+            </strong>
+
+            {{ subject or "No subject" }}
+
+        </div>
+
+    </div>
+
+
+    <!-- DETECTION FINDINGS -->
+
+    <div class="section-card">
+
+        <h2>
+            🔍 Detection Findings
+        </h2>
+
+        {% if reasons %}
+
+            {% for reason in reasons %}
+
+                <div class="finding">
+
+                    ⚠️ {{ reason }}
+
+                </div>
+
+            {% endfor %}
+
+        {% else %}
+
+            <p class="no-findings">
+
+                No suspicious indicators were detected.
+
+            </p>
+
+        {% endif %}
+
+    </div>
+
+
+    <!-- RISK SCALE -->
+
+    <div class="risk-info">
+
+        <h2>
+            📊 Threat Level Guide
+        </h2>
+
+
+        <div
+            class="risk-level
+            {% if score >= 0 and score <= 24 %}
+                current
+            {% endif %}"
+        >
+
+            <span class="low">
+                Low Risk
+            </span>
+
+            <span>
+                0 – 24
+            </span>
+
+        </div>
+
+
+        <div
+            class="risk-level
+            {% if score >= 25 and score <= 49 %}
+                current
+            {% endif %}"
+        >
+
+            <span class="suspicious">
+                Suspicious
+            </span>
+
+            <span>
+                25 – 49
+            </span>
+
+        </div>
+
+
+        <div
+            class="risk-level
+            {% if score >= 50 and score <= 74 %}
+                current
+            {% endif %}"
+        >
+
+            <span class="high">
+                High Risk
+            </span>
+
+            <span>
+                50 – 74
+            </span>
+
+        </div>
+
+
+        <div
+            class="risk-level
+            {% if score >= 75 and score <= 100 %}
+                current
+            {% endif %}"
+        >
+
+            <span class="critical">
+                Critical Threat
+            </span>
+
+            <span>
+                75 – 100
+            </span>
+
+        </div>
+
+    </div>
+
+
+    <!-- BACK BUTTON -->
+
+    <a
+        href="/"
+        class="back-button"
+    >
+
+        ← Analyze Another Email
+
+    </a>
+
+</div>
+
+</body>
+
+</html>

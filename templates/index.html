@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>MalDetector</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('css_file', filename='style.css') }}"
+    >
+
+</head>
+
+<body>
+
+<div class="app-container">
+
+    <!-- HEADER -->
+
+    <div class="app-header">
+
+        <h1>🛡️ MalDetector</h1>
+
+        <p>
+            Email Threat Detection System
+        </p>
+
+    </div>
+
+
+    <!-- EMAIL SOURCE SECTION -->
+
+    <div class="source-card">
+
+        <h2>Choose Email Source</h2>
+
+        <p class="source-description">
+            Select an email directly from your Gmail account,
+            or download an email and upload the .eml file.
+        </p>
+
+
+        <!-- GMAIL -->
+
+        <div class="source-option">
+
+            <div class="source-icon">
+                📧
+            </div>
+
+            <div class="source-content">
+
+                <h3>Analyze Gmail</h3>
+
+                <p>
+                    Login with Gmail and select the email
+                    you want MalDetector to analyze.
+                </p>
+
+                <a
+                    href="{{ url_for('connect_gmail') }}"
+                    class="primary-button"
+                >
+                    Login with Gmail
+                </a>
+
+            </div>
+
+        </div>
+
+
+        <!-- OR -->
+
+        <div class="or-divider">
+
+            <span>OR</span>
+
+        </div>
+
+
+        <!-- UPLOAD -->
+
+        <div class="source-option">
+
+            <div class="source-icon">
+                📎
+            </div>
+
+            <div class="source-content">
+
+                <h3>Upload Email</h3>
+
+                <p>
+                    Download the email from your mail service
+                    and upload the downloaded <strong>.eml</strong>
+                    file here.
+                </p>
+
+
+                <form
+                    action="{{ url_for('upload_email') }}"
+                    method="POST"
+                    enctype="multipart/form-data"
+                >
+
+                    <label
+                        for="email_file"
+                        class="primary-button"
+                    >
+                        Select Email File
+                    </label>
+
+                    <input
+                        type="file"
+                        id="email_file"
+                        name="email_file"
+                        accept=".eml"
+                        onchange="this.form.submit()"
+                        hidden
+                    >
+
+                </form>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- EMAIL ANALYSIS SECTION -->
+
+    {% if email_body %}
+
+    <div class="analysis-card">
+
+        <div class="analysis-header">
+
+            <h2>🔍 Email Ready for Analysis</h2>
+
+            <p>
+                Review the email content before starting
+                the security analysis.
+            </p>
+
+        </div>
+
+
+        <!-- EMAIL DETAILS -->
+
+        <div class="email-meta">
+
+            <div class="meta-item">
+
+                <span>From</span>
+
+                <strong>
+                    {{ sender or "Unknown sender" }}
+                </strong>
+
+            </div>
+
+
+            <div class="meta-item">
+
+                <span>Subject</span>
+
+                <strong>
+                    {{ subject or "No subject" }}
+                </strong>
+
+            </div>
+
+        </div>
+
+
+        <!-- EMAIL BODY -->
+
+        <div class="email-preview">
+
+            <h3>Email Content</h3>
+
+            <div class="email-content">
+                {{ email_body }}
+            </div>
+
+        </div>
+
+
+        <!-- ANALYZE FORM -->
+
+        <form
+            action="{{ url_for('analyze') }}"
+            method="POST"
+        >
+
+            <input
+                type="hidden"
+                name="sender"
+                value="{{ sender or '' }}"
+            >
+
+            <input
+                type="hidden"
+                name="subject"
+                value="{{ subject or '' }}"
+            >
+
+            <textarea
+                name="email_body"
+                hidden
+            >{{ email_body }}</textarea>
+
+
+            <button
+                type="submit"
+                class="analyze-button"
+            >
+                🛡️ Analyze Email
+            </button>
+
+        </form>
+
+    </div>
+
+    {% endif %}
+
+
+    <!-- FOOTER -->
+
+  <footer class="footer">
+    <div>MalDetector • Email Security Analysis</div>
+
+    <div class="footer-note">
+        This tool provides an automated assessment and should not be treated as a definitive security verdict.
+    </div>
+
+    <div class="footer-credit">
+        Made with ❤️ by Sanjay
+       
+    </div>
+    <div class="footer-thank">
+        Thank you ChatGPT!!
+    </div>    
+</footer>

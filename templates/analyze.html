@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>MalDetector - Email Analysis</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('css_file', filename='style.css') }}"
+    >
+
+</head>
+
+<body>
+
+<div class="analysis-page">
+
+
+    <!-- HEADER -->
+
+    <div class="analysis-header">
+
+        <div>
+
+            <h1>🛡️ MalDetector</h1>
+
+            <p>
+                Email Threat Analysis
+            </p>
+
+        </div>
+
+
+        <a
+            href="{{ url_for('home') }}"
+            class="back-link"
+        >
+            ← Home
+        </a>
+
+    </div>
+
+
+    <!-- EMAIL INFORMATION -->
+
+    <div class="analysis-card">
+
+        <div class="analysis-title">
+
+            <span>📧</span>
+
+            <div>
+
+                <h2>
+                    Email Under Analysis
+                </h2>
+
+                <p>
+                    Review the email before starting
+                    the threat analysis.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div class="email-info">
+
+            <div class="info-row">
+
+                <span>
+                    From
+                </span>
+
+                <strong>
+                    {{ sender }}
+                </strong>
+
+            </div>
+
+
+            <div class="info-row">
+
+                <span>
+                    Subject
+                </span>
+
+                <strong>
+                    {{ subject }}
+                </strong>
+
+            </div>
+
+        </div>
+
+
+        <!-- EMAIL BODY -->
+
+        <div class="body-label">
+
+            Email Content
+
+        </div>
+
+
+        <textarea
+            class="analysis-textarea"
+            readonly
+        >{{ email_body }}</textarea>
+
+
+        <!-- ANALYZE -->
+
+        {% if not result %}
+
+        <form
+            action="{{ url_for('analyze') }}"
+            method="POST"
+        >
+
+            <input
+                type="hidden"
+                name="sender"
+                value="{{ sender }}"
+            >
+
+            <input
+                type="hidden"
+                name="subject"
+                value="{{ subject }}"
+            >
+
+            <textarea
+                name="email_body"
+                hidden
+            >{{ email_body }}</textarea>
+
+
+            <button
+                type="submit"
+                class="analyze-button"
+            >
+
+                🔍 Analyze Email
+
+            </button>
+
+        </form>
+
+        {% endif %}
+
+
+    </div>
+
+
+    <!-- RESULT -->
+
+    {% if result %}
+
+    <div class="result-card">
+
+        <div class="result-heading">
+
+            <span>
+                🔎
+            </span>
+
+            <h2>
+                Analysis Result
+            </h2>
+
+        </div>
+
+
+        <div class="result-status">
+
+            {{ result }}
+
+        </div>
+
+
+        <div class="score">
+
+            Detection Score:
+
+            <strong>
+                {{ score }}
+            </strong>
+
+        </div>
+
+
+        {% if reasons %}
+
+        <div class="reasons">
+
+            <h3>
+                Detection Indicators
+            </h3>
+
+
+            {% for reason in reasons %}
+
+            <div class="reason">
+
+                ⚠️ {{ reason }}
+
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+        {% endif %}
+
+
+    </div>
+
+    {% endif %}
+
+
+</div>
+
+</body>
+
+</html>
