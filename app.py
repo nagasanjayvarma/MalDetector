@@ -24,7 +24,7 @@ from google.oauth2.credentials import Credentials
 # =========================================================
 
 # Only allow HTTP OAuth for local development.
-# Render uses HTTPS, so this is not enabled there.
+# Render uses HTTPS.
 if os.environ.get("RENDER") != "true":
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
@@ -66,6 +66,9 @@ app = Flask(
     template_folder=TEMPLATES_DIR
 )
 
+# FIX: Use a stable secret key for Flask sessions.
+# Render Environment Variable:
+# FLASK_SECRET_KEY
 app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY",
     "maldetector-local-secret-key"
@@ -96,7 +99,6 @@ SCOPES = [
 def get_google_client_config():
     """
     Uses Render environment variables in production.
-
     For local development, credentials.json can still be used.
     """
 
@@ -179,9 +181,7 @@ def connect_gmail():
     client_config = get_google_client_config()
 
     if not client_config:
-        return (
-            "Google OAuth configuration was not found."
-        )
+        return "Google OAuth configuration was not found."
 
     redirect_uri = url_for(
         "oauth_callback",
@@ -200,8 +200,12 @@ def connect_gmail():
         include_granted_scopes="true"
     )
 
+    # Store OAuth information in Flask session
     session["state"] = state
     session["code_verifier"] = flow.code_verifier
+
+    # Make sure session is saved before redirecting to Google
+    session.modified = True
 
     return redirect(
         authorization_url
@@ -249,6 +253,7 @@ def oauth_callback():
         flow.fetch_token(
             authorization_response=request.url
         )
+
     except Exception as error:
         return (
             "Unable to complete Google authentication."
@@ -281,6 +286,7 @@ def oauth_callback():
             f"Error: {error}"
         )
 
+    # Remove temporary OAuth session data
     session.pop("state", None)
     session.pop("code_verifier", None)
 
@@ -304,6 +310,7 @@ def get_gmail_credentials():
         return None
 
     try:
+
         credentials = Credentials.from_authorized_user_file(
             token_path,
             SCOPES
@@ -511,7 +518,6 @@ def select_gmail_email(message_id):
     )
 
     if not body:
-
         body = (
             "Email body could not be extracted."
         )
@@ -873,7 +879,6 @@ def analyze():
         100
     )
 
-
     if score <= 24:
 
         level_class = "low"
@@ -953,20 +958,20 @@ if __name__ == "__main__":
 
     print("Project folder:")
     print(BASE_DIR)
-
     print()
+
     print("Templates folder:")
     print(TEMPLATES_DIR)
-
     print()
+
     print("Static folder:")
     print(STATIC_DIR)
-
     print()
+
     print("CSS folder:")
     print(CSS_DIR)
-
     print()
+
     print("CSS file:")
     print(
         os.path.join(
@@ -976,6 +981,7 @@ if __name__ == "__main__":
     )
 
     print()
+
     print("CSS file exists:")
     print(
         os.path.exists(
@@ -987,6 +993,7 @@ if __name__ == "__main__":
     )
 
     print()
+
     print("======================================")
     print()
 
