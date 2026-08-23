@@ -10,11 +10,16 @@ from flask import (
     redirect,
     url_for,
     request,
-    send_from_directory,
+    send_from_directory
 )
 
 from werkzeug.middleware.proxy_fix import ProxyFix
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
+from itsdangerous import (
+    URLSafeTimedSerializer,
+    BadSignature,
+    SignatureExpired
+)
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -22,18 +27,12 @@ from google.oauth2.credentials import Credentials
 
 
 # =========================================================
-# OAUTH SETTINGS
-# =========================================================
-
-if not os.environ.get("RENDER"):
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
-
-# =========================================================
 # PROJECT PATHS
 # =========================================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
 TEMPLATES_DIR = os.path.join(
     BASE_DIR,
@@ -57,13 +56,13 @@ JS_DIR = os.path.join(
 
 
 # =========================================================
-# FLASK APPLICATION
+# FLASK
 # =========================================================
 
 app = Flask(
     __name__,
-    static_folder=STATIC_DIR,
-    template_folder=TEMPLATES_DIR
+    template_folder=TEMPLATES_DIR,
+    static_folder=STATIC_DIR
 )
 
 app.wsgi_app = ProxyFix(
@@ -72,12 +71,23 @@ app.wsgi_app = ProxyFix(
     x_host=1
 )
 
+
+# =========================================================
+# SECRET KEY
+# =========================================================
+
 app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY",
     "maldetector-local-secret-key"
 )
 
+
+# =========================================================
+# COOKIE SETTINGS
+# =========================================================
+
 if os.environ.get("RENDER"):
+
     app.config.update(
         SESSION_COOKIE_SECURE=True,
         SESSION_COOKIE_HTTPONLY=True,
@@ -87,7 +97,7 @@ if os.environ.get("RENDER"):
 
 
 # =========================================================
-# OAUTH STATE SECURITY
+# OAUTH STATE SERIALIZER
 # =========================================================
 
 oauth_state_serializer = URLSafeTimedSerializer(
@@ -97,7 +107,7 @@ oauth_state_serializer = URLSafeTimedSerializer(
 
 
 # =========================================================
-# GOOGLE GMAIL SCOPES
+# GMAIL SCOPES
 # =========================================================
 
 SCOPES = [
@@ -106,7 +116,7 @@ SCOPES = [
 
 
 # =========================================================
-# GOOGLE OAUTH CONFIGURATION
+# GOOGLE CLIENT CONFIG
 # =========================================================
 
 def get_google_client_config():
@@ -119,20 +129,32 @@ def get_google_client_config():
         "GOOGLE_CLIENT_SECRET"
     )
 
+    # -----------------------------------------------------
+    # Render / environment variables
+    # -----------------------------------------------------
+
     if client_id and client_secret:
 
         return {
             "web": {
                 "client_id": client_id,
+
                 "client_secret": client_secret,
+
                 "auth_uri":
                     "https://accounts.google.com/o/oauth2/auth",
+
                 "token_uri":
                     "https://oauth2.googleapis.com/token",
+
                 "auth_provider_x509_cert_url":
                     "https://www.googleapis.com/oauth2/v1/certs"
             }
         }
+
+    # -----------------------------------------------------
+    # Local credentials.json
+    # -----------------------------------------------------
 
     credentials_path = os.path.join(
         BASE_DIR,
@@ -155,7 +177,7 @@ def get_google_client_config():
 
 
 # =========================================================
-# CSS FILE
+# CSS
 # =========================================================
 
 @app.route("/css/<path:filename>")
@@ -168,7 +190,7 @@ def css_file(filename):
 
 
 # =========================================================
-# JAVASCRIPT FILE
+# JAVASCRIPT
 # =========================================================
 
 @app.route("/js/<path:filename>")
@@ -193,7 +215,7 @@ def home():
 
 
 # =========================================================
-# GMAIL LOGIN
+# CONNECT GMAIL
 # =========================================================
 
 @app.route("/connect-gmail")
@@ -207,20 +229,29 @@ def connect_gmail():
             "Google OAuth configuration was not found."
         )
 
+
     redirect_uri = url_for(
         "oauth_callback",
         _external=True
     )
 
-    # Explicitly enable PKCE code-verifier generation.
+
+    # -----------------------------------------------------
+    # CREATE GOOGLE OAUTH FLOW
+    # -----------------------------------------------------
+
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        redirect_uri=redirect_uri,
-        autogenerate_code_verifier=True
+        redirect_uri=redirect_uri
     )
 
-    authorization_url, generated_state = (
+
+    # -----------------------------------------------------
+    # GENERATE GOOGLE AUTHORIZATION URL
+    # -----------------------------------------------------
+
+    authorization_url, state = (
         flow.authorization_url(
             access_type="offline",
             prompt="consent",
@@ -228,18 +259,34 @@ def connect_gmail():
         )
     )
 
-    # Make sure the verifier actually exists.
+
+    # -----------------------------------------------------
+    # CHECK CODE VERIFIER
+    # -----------------------------------------------------
+
     if not flow.code_verifier:
 
         return (
-            "Unable to create OAuth PKCE code verifier."
+            "OAuth PKCE code verifier was not generated."
         )
 
-    # Sign both the Google state and PKCE verifier.
+
+    # -----------------------------------------------------
+    # SIGN STATE + CODE VERIFIER
+    # -----------------------------------------------------
+
     signed_state = oauth_state_serializer.dumps({
-        "state": generated_state,
+
+        "state": state,
+
         "code_verifier": flow.code_verifier
+
     })
+
+
+    # -----------------------------------------------------
+    # REPLACE GOOGLE STATE WITH OUR SIGNED STATE
+    # -----------------------------------------------------
 
     from urllib.parse import (
         urlparse,
@@ -248,31 +295,34 @@ def connect_gmail():
         urlunparse
     )
 
-    parsed_url = urlparse(
+
+    parsed = urlparse(
         authorization_url
     )
 
-    query_params = parse_qs(
-        parsed_url.query
+
+    params = parse_qs(
+        parsed.query
     )
 
-    query_params["state"] = [
+
+    params["state"] = [
         signed_state
     ]
 
-    authorization_url = urlunparse(
-        (
-            parsed_url.scheme,
-            parsed_url.netloc,
-            parsed_url.path,
-            parsed_url.params,
-            urlencode(
-                query_params,
-                doseq=True
-            ),
-            parsed_url.fragment
-        )
-    )
+
+    authorization_url = urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        urlencode(
+            params,
+            doseq=True
+        ),
+        parsed.fragment
+    ))
+
 
     return redirect(
         authorization_url
@@ -280,7 +330,7 @@ def connect_gmail():
 
 
 # =========================================================
-# GMAIL OAUTH CALLBACK
+# GOOGLE OAUTH CALLBACK
 # =========================================================
 
 @app.route("/oauth2callback")
@@ -290,13 +340,22 @@ def oauth_callback():
         "state"
     )
 
+
+    # -----------------------------------------------------
+    # STATE CHECK
+    # -----------------------------------------------------
+
     if not returned_state:
 
         return (
             "OAuth state was not returned by Google."
         )
 
-    # Verify signed state.
+
+    # -----------------------------------------------------
+    # VERIFY SIGNED STATE
+    # -----------------------------------------------------
+
     try:
 
         oauth_data = oauth_state_serializer.loads(
@@ -304,18 +363,19 @@ def oauth_callback():
             max_age=600
         )
 
-    except SignatureExpired as error:
+    except SignatureExpired:
 
         return (
-            "OAuth session expired.<br><br>"
-            f"Details: {error}<br><br>"
+            "OAuth session expired."
+            "<br><br>"
             "Please connect Gmail again."
         )
 
     except BadSignature:
 
         return (
-            "Invalid OAuth session. "
+            "Invalid OAuth session."
+            "<br><br>"
             "Please connect Gmail again."
         )
 
@@ -327,29 +387,49 @@ def oauth_callback():
             f"Error: {error}"
         )
 
+
+    # -----------------------------------------------------
+    # GET ORIGINAL STATE
+    # -----------------------------------------------------
+
     original_state = oauth_data.get(
         "state"
     )
+
+
+    # -----------------------------------------------------
+    # GET CODE VERIFIER
+    # -----------------------------------------------------
 
     code_verifier = oauth_data.get(
         "code_verifier"
     )
 
+
     if not original_state:
 
         return (
-            "OAuth state data is incomplete. "
+            "OAuth state data is incomplete."
+            "<br><br>"
             "Please connect Gmail again."
         )
+
 
     if not code_verifier:
 
         return (
-            "OAuth PKCE code verifier is missing. "
+            "OAuth code verifier is missing."
+            "<br><br>"
             "Please connect Gmail again."
         )
 
+
+    # -----------------------------------------------------
+    # GOOGLE CONFIG
+    # -----------------------------------------------------
+
     client_config = get_google_client_config()
+
 
     if not client_config:
 
@@ -357,20 +437,29 @@ def oauth_callback():
             "Google OAuth configuration was not found."
         )
 
+
     redirect_uri = url_for(
         "oauth_callback",
         _external=True
     )
 
-    # Explicitly enable PKCE here as well.
+
+    # -----------------------------------------------------
+    # CREATE FLOW AGAIN
+    # -----------------------------------------------------
+
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
         state=original_state,
         redirect_uri=redirect_uri,
-        code_verifier=code_verifier,
-        autogenerate_code_verifier=True
+        code_verifier=code_verifier
     )
+
+
+    # -----------------------------------------------------
+    # EXCHANGE AUTHORIZATION CODE
+    # -----------------------------------------------------
 
     try:
 
@@ -386,16 +475,23 @@ def oauth_callback():
             f"Error: {error}"
         )
 
+
+    # -----------------------------------------------------
+    # GET CREDENTIALS
+    # -----------------------------------------------------
+
     credentials = flow.credentials
 
-    # =====================================================
-    # SAVE GMAIL TOKEN
-    # =====================================================
+
+    # -----------------------------------------------------
+    # SAVE TOKEN
+    # -----------------------------------------------------
 
     token_path = os.path.join(
         BASE_DIR,
         "token.json"
     )
+
 
     try:
 
@@ -417,13 +513,18 @@ def oauth_callback():
             f"Error: {error}"
         )
 
+
+    # -----------------------------------------------------
+    # GO TO GMAIL
+    # -----------------------------------------------------
+
     return redirect(
         url_for("gmail")
     )
 
 
 # =========================================================
-# LOAD GMAIL CREDENTIALS
+# GET GMAIL CREDENTIALS
 # =========================================================
 
 def get_gmail_credentials():
@@ -433,17 +534,21 @@ def get_gmail_credentials():
         "token.json"
     )
 
+
     if not os.path.exists(
         token_path
     ):
 
         return None
 
+
     try:
 
-        credentials = Credentials.from_authorized_user_file(
-            token_path,
-            SCOPES
+        credentials = (
+            Credentials.from_authorized_user_file(
+                token_path,
+                SCOPES
+            )
         )
 
         return credentials
@@ -462,11 +567,13 @@ def gmail():
 
     credentials = get_gmail_credentials()
 
+
     if not credentials:
 
         return redirect(
             url_for("connect_gmail")
         )
+
 
     try:
 
@@ -476,24 +583,37 @@ def gmail():
             credentials=credentials
         )
 
+
         page_token = request.args.get(
             "page_token"
         )
 
+
         if page_token:
 
-            results = service.users().messages().list(
-                userId="me",
-                maxResults=20,
-                pageToken=page_token
-            ).execute()
+            results = (
+                service.users()
+                .messages()
+                .list(
+                    userId="me",
+                    maxResults=20,
+                    pageToken=page_token
+                )
+                .execute()
+            )
 
         else:
 
-            results = service.users().messages().list(
-                userId="me",
-                maxResults=20
-            ).execute()
+            results = (
+                service.users()
+                .messages()
+                .list(
+                    userId="me",
+                    maxResults=20
+                )
+                .execute()
+            )
+
 
     except Exception as error:
 
@@ -503,38 +623,54 @@ def gmail():
             f"Error: {error}"
         )
 
+
     messages = results.get(
         "messages",
         []
     )
 
+
     email_list = []
+
+
+    # -----------------------------------------------------
+    # GET EMAIL INFORMATION
+    # -----------------------------------------------------
 
     for message in messages:
 
         try:
 
-            message_data = service.users().messages().get(
-                userId="me",
-                id=message["id"],
-                format="metadata",
-                metadataHeaders=[
-                    "From",
-                    "Subject",
-                    "Date"
-                ]
-            ).execute()
-
-            headers = message_data[
-                "payload"
-            ].get(
-                "headers",
-                []
+            message_data = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message["id"],
+                    format="metadata",
+                    metadataHeaders=[
+                        "From",
+                        "Subject",
+                        "Date"
+                    ]
+                )
+                .execute()
             )
 
+
+            headers = (
+                message_data
+                .get("payload", {})
+                .get("headers", [])
+            )
+
+
             sender = "Unknown sender"
+
             subject = "No subject"
+
             date = ""
+
 
             for header in headers:
 
@@ -542,11 +678,13 @@ def gmail():
                     "name"
                 ].lower()
 
+
                 if name == "from":
 
                     sender = header[
                         "value"
                     ]
+
 
                 elif name == "subject":
 
@@ -554,26 +692,40 @@ def gmail():
                         "value"
                     ]
 
+
                 elif name == "date":
 
                     date = header[
                         "value"
                     ]
 
+
             email_list.append({
-                "id": message["id"],
-                "sender": sender,
-                "subject": subject,
-                "date": date
+
+                "id":
+                    message["id"],
+
+                "sender":
+                    sender,
+
+                "subject":
+                    subject,
+
+                "date":
+                    date
+
             })
+
 
         except Exception:
 
             continue
 
+
     next_page_token = results.get(
         "nextPageToken"
     )
+
 
     return render_template(
         "gmail.html",
@@ -586,16 +738,20 @@ def gmail():
 # SELECT GMAIL EMAIL
 # =========================================================
 
-@app.route("/gmail/email/<message_id>")
+@app.route(
+    "/gmail/email/<message_id>"
+)
 def select_gmail_email(message_id):
 
     credentials = get_gmail_credentials()
+
 
     if not credentials:
 
         return redirect(
             url_for("connect_gmail")
         )
+
 
     try:
 
@@ -605,11 +761,18 @@ def select_gmail_email(message_id):
             credentials=credentials
         )
 
-        message = service.users().messages().get(
-            userId="me",
-            id=message_id,
-            format="full"
-        ).execute()
+
+        message = (
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="full"
+            )
+            .execute()
+        )
+
 
     except Exception as error:
 
@@ -619,43 +782,51 @@ def select_gmail_email(message_id):
             f"Error: {error}"
         )
 
-    headers = message[
-        "payload"
-    ].get(
-        "headers",
-        []
+
+    headers = (
+        message
+        .get("payload", {})
+        .get("headers", [])
     )
 
+
     sender = "Unknown sender"
+
     subject = "No subject"
+
 
     for header in headers:
 
-        if header[
+        name = header[
             "name"
-        ].lower() == "from":
+        ].lower()
+
+
+        if name == "from":
 
             sender = header[
                 "value"
             ]
 
-        elif header[
-            "name"
-        ].lower() == "subject":
+
+        elif name == "subject":
 
             subject = header[
                 "value"
             ]
 
+
     body = extract_email_body(
         message["payload"]
     )
+
 
     if not body:
 
         body = (
             "Email body could not be extracted."
         )
+
 
     return render_template(
         "analyze.html",
@@ -666,12 +837,13 @@ def select_gmail_email(message_id):
 
 
 # =========================================================
-# EXTRACT GMAIL BODY
+# EXTRACT EMAIL BODY
 # =========================================================
 
 def extract_email_body(payload):
 
     body = ""
+
 
     if "parts" in payload:
 
@@ -682,27 +854,32 @@ def extract_email_body(payload):
                 ""
             )
 
+
             if mime_type == "text/plain":
 
-                data = part.get(
-                    "body",
-                    {}
-                ).get(
-                    "data"
+                data = (
+                    part.get("body", {})
+                    .get("data")
                 )
+
 
                 if data:
 
-                    body = base64.urlsafe_b64decode(
-                        data
-                    ).decode(
-                        "utf-8",
-                        errors="replace"
+                    body = (
+                        base64.urlsafe_b64decode(
+                            data
+                        )
+                        .decode(
+                            "utf-8",
+                            errors="replace"
+                        )
                     )
+
 
                 if body:
 
                     break
+
 
             elif mime_type.startswith(
                 "multipart/"
@@ -712,27 +889,33 @@ def extract_email_body(payload):
                     part
                 )
 
+
                 if body:
 
                     break
 
+
     else:
 
-        data = payload.get(
-            "body",
-            {}
-        ).get(
-            "data"
+        data = (
+            payload
+            .get("body", {})
+            .get("data")
         )
+
 
         if data:
 
-            body = base64.urlsafe_b64decode(
-                data
-            ).decode(
-                "utf-8",
-                errors="replace"
+            body = (
+                base64.urlsafe_b64decode(
+                    data
+                )
+                .decode(
+                    "utf-8",
+                    errors="replace"
+                )
             )
+
 
     return body
 
@@ -751,13 +934,16 @@ def upload_email():
         "email_file"
     )
 
+
     if not uploaded_file:
 
         return "No file selected."
 
+
     if uploaded_file.filename == "":
 
         return "No file selected."
+
 
     if not uploaded_file.filename.lower().endswith(
         ".eml"
@@ -765,15 +951,18 @@ def upload_email():
 
         return "Only .eml files are allowed."
 
+
     try:
 
         email_data = uploaded_file.read()
+
 
         msg = BytesParser(
             policy=policy.default
         ).parsebytes(
             email_data
         )
+
 
     except Exception as error:
 
@@ -783,23 +972,30 @@ def upload_email():
             f"Error: {error}"
         )
 
+
     sender = msg.get(
         "From",
         "Unknown sender"
     )
+
 
     subject = msg.get(
         "Subject",
         "No subject"
     )
 
+
     body = ""
+
 
     if msg.is_multipart():
 
         for part in msg.walk():
 
-            if part.get_content_type() == "text/plain":
+            if (
+                part.get_content_type()
+                == "text/plain"
+            ):
 
                 try:
 
@@ -809,9 +1005,11 @@ def upload_email():
 
                     body = ""
 
+
                 if body:
 
                     break
+
 
     else:
 
@@ -823,11 +1021,13 @@ def upload_email():
 
             body = ""
 
+
     if not body:
 
         body = (
             "Email body could not be extracted."
         )
+
 
     return render_template(
         "analyze.html",
@@ -852,36 +1052,51 @@ def analyze():
         ""
     )
 
+
     sender = request.form.get(
         "sender",
         "Unknown sender"
     )
+
 
     subject = request.form.get(
         "subject",
         "No subject"
     )
 
+
     score = 0
+
     reasons = []
+
 
     text = email_text.lower()
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # URGENCY
-    # =====================================================
+    # -----------------------------------------------------
 
     urgency_words = [
+
         "urgent",
+
         "immediately",
+
         "limited time",
+
         "act now",
+
         "expires",
+
         "deadline",
+
         "hurry",
+
         "last chance"
+
     ]
+
 
     for word in urgency_words:
 
@@ -894,22 +1109,34 @@ def analyze():
             )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # PAYMENT
-    # =====================================================
+    # -----------------------------------------------------
 
     payment_words = [
+
         "payment",
+
         "pay",
+
         "invoice",
+
         "money",
+
         "price",
+
         "₹",
+
         "inr",
+
         "bank account",
+
         "credit card",
+
         "debit card"
+
     ]
+
 
     for word in payment_words:
 
@@ -922,20 +1149,30 @@ def analyze():
             )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # CREDENTIALS
-    # =====================================================
+    # -----------------------------------------------------
 
     credential_words = [
+
         "password",
+
         "verify your account",
+
         "login",
+
         "sign in",
+
         "username",
+
         "otp",
+
         "verification code",
+
         "credentials"
+
     ]
+
 
     for word in credential_words:
 
@@ -948,14 +1185,15 @@ def analyze():
             )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # URLS
-    # =====================================================
+    # -----------------------------------------------------
 
     urls = re.findall(
         r"https?://[^\s]+",
         email_text
     )
+
 
     if urls:
 
@@ -966,18 +1204,26 @@ def analyze():
         )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # URL SHORTENERS
-    # =====================================================
+    # -----------------------------------------------------
 
     shorteners = [
+
         "bit.ly",
+
         "tinyurl.com",
+
         "t.co",
+
         "goo.gl",
+
         "ow.ly",
+
         "is.gd"
+
     ]
+
 
     for shortener in shorteners:
 
@@ -990,19 +1236,28 @@ def analyze():
             )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # MALWARE WORDS
-    # =====================================================
+    # -----------------------------------------------------
 
     malware_words = [
+
         "malware",
+
         "virus",
+
         "trojan",
+
         "ransomware",
+
         "infected",
+
         "suspicious attachment",
+
         "download attachment"
+
     ]
+
 
     for word in malware_words:
 
@@ -1015,9 +1270,9 @@ def analyze():
             )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # LIMIT SCORE
-    # =====================================================
+    # -----------------------------------------------------
 
     score = min(
         score,
@@ -1025,9 +1280,9 @@ def analyze():
     )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # THREAT LEVEL
-    # =====================================================
+    # -----------------------------------------------------
 
     if score <= 24:
 
@@ -1037,10 +1292,10 @@ def analyze():
 
         threat_description = (
             "The email contains few or no suspicious "
-            "indicators based on the current detection rules. "
-            "It appears relatively safe, but always verify "
-            "unexpected emails before interacting with them."
+            "indicators based on the current detection "
+            "rules."
         )
+
 
     elif score <= 49:
 
@@ -1049,11 +1304,10 @@ def analyze():
         threat_name = "Suspicious"
 
         threat_description = (
-            "The email contains several indicators that "
-            "deserve caution. Avoid clicking links or "
-            "providing sensitive information until the "
-            "sender and request have been verified."
+            "The email contains several indicators "
+            "that deserve caution."
         )
+
 
     elif score <= 74:
 
@@ -1062,10 +1316,10 @@ def analyze():
         threat_name = "High Risk"
 
         threat_description = (
-            "Multiple suspicious characteristics were detected. "
-            "This email may be attempting phishing, credential "
-            "theft, financial fraud, or another malicious action."
+            "Multiple suspicious characteristics were "
+            "detected."
         )
+
 
     else:
 
@@ -1074,32 +1328,38 @@ def analyze():
         threat_name = "Critical Threat"
 
         threat_description = (
-            "The email contains strong indicators associated "
-            "with phishing or malicious activity. Do not click "
-            "links, open unexpected attachments, or provide "
-            "credentials or financial information."
+            "The email contains strong indicators "
+            "associated with phishing or malicious activity."
         )
 
 
-    # =====================================================
-    # RESULTS
-    # =====================================================
+    # -----------------------------------------------------
+    # RESULTS PAGE
+    # -----------------------------------------------------
 
     return render_template(
         "results.html",
+
         sender=sender,
+
         subject=subject,
+
         email_body=email_text,
+
         score=score,
+
         level_class=level_class,
+
         threat_name=threat_name,
+
         threat_description=threat_description,
+
         reasons=reasons
     )
 
 
 # =========================================================
-# RUN
+# START APPLICATION
 # =========================================================
 
 if __name__ == "__main__":
@@ -1110,47 +1370,35 @@ if __name__ == "__main__":
     print("======================================")
     print()
 
-    print("Project folder:")
-    print(BASE_DIR)
-    print()
-
-    print("Templates folder:")
-    print(TEMPLATES_DIR)
-    print()
-
-    print("Static folder:")
-    print(STATIC_DIR)
-    print()
-
-    print("CSS folder:")
-    print(CSS_DIR)
-    print()
-
-    print("CSS file:")
     print(
-        os.path.join(
-            CSS_DIR,
-            "style.css"
-        )
+        "Project folder:",
+        BASE_DIR
     )
 
-    print()
-
-    print("CSS file exists:")
     print(
-        os.path.exists(
-            os.path.join(
-                CSS_DIR,
-                "style.css"
-            )
-        )
+        "Templates folder:",
+        TEMPLATES_DIR
     )
 
-    print()
+    print(
+        "Static folder:",
+        STATIC_DIR
+    )
 
-    print("======================================")
+    print(
+        "CSS folder:",
+        CSS_DIR
+    )
+
     print()
 
     app.run(
-        debug=True
+        host="0.0.0.0",
+        port=int(
+            os.environ.get(
+                "PORT",
+                5000
+            )
+        ),
+        debug=False
     )
