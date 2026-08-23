@@ -25,8 +25,6 @@ from google.oauth2.credentials import Credentials
 # OAUTH SETTINGS
 # =========================================================
 
-# Only allow HTTP OAuth for local development.
-# Render uses HTTPS, so this is not enabled there.
 if not os.environ.get("RENDER"):
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
@@ -68,20 +66,17 @@ app = Flask(
     template_folder=TEMPLATES_DIR
 )
 
-# Trust Render's HTTPS reverse proxy
 app.wsgi_app = ProxyFix(
     app.wsgi_app,
     x_proto=1,
     x_host=1
 )
 
-# Flask secret key
 app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY",
     "maldetector-local-secret-key"
 )
 
-# Secure cookies when running on Render
 if os.environ.get("RENDER"):
     app.config.update(
         SESSION_COOKIE_SECURE=True,
@@ -94,15 +89,6 @@ if os.environ.get("RENDER"):
 # =========================================================
 # OAUTH STATE SECURITY
 # =========================================================
-
-# We do NOT depend on the Flask session for OAuth state.
-#
-# The OAuth state and PKCE code verifier are securely signed
-# using the Flask secret key and sent through Google's OAuth
-# state parameter.
-#
-# This avoids the production session-cookie problem that was
-# causing "OAuth session expired".
 
 oauth_state_serializer = URLSafeTimedSerializer(
     app.secret_key,
@@ -124,10 +110,6 @@ SCOPES = [
 # =========================================================
 
 def get_google_client_config():
-    """
-    Uses Render environment variables in production.
-    For local development, credentials.json can still be used.
-    """
 
     client_id = os.environ.get(
         "GOOGLE_CLIENT_ID"
@@ -152,7 +134,6 @@ def get_google_client_config():
             }
         }
 
-    # Local development fallback
     credentials_path = os.path.join(
         BASE_DIR,
         "credentials.json"
@@ -231,16 +212,14 @@ def connect_gmail():
         _external=True
     )
 
+    # Explicitly enable PKCE code-verifier generation.
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        redirect_uri=redirect_uri
+        redirect_uri=redirect_uri,
+        autogenerate_code_verifier=True
     )
 
-    # Generate the PKCE code verifier.
-    #
-    # Flow.authorization_url() creates one automatically
-    # when PKCE is being used.
     authorization_url, generated_state = (
         flow.authorization_url(
             access_type="offline",
@@ -249,26 +228,18 @@ def connect_gmail():
         )
     )
 
-    # The generated OAuth state is signed together with the
-    # PKCE code verifier.
-    #
-    # This replaces:
-    #
-    # session["state"]
-    # session["code_verifier"]
-    #
-    # which was the source of the production problem.
+    # Make sure the verifier actually exists.
+    if not flow.code_verifier:
 
+        return (
+            "Unable to create OAuth PKCE code verifier."
+        )
+
+    # Sign both the Google state and PKCE verifier.
     signed_state = oauth_state_serializer.dumps({
         "state": generated_state,
         "code_verifier": flow.code_verifier
     })
-
-    # Replace the state parameter in Google's authorization
-    # URL with our signed state.
-    #
-    # authorization_url already contains ?state=...
-    # so replace only that generated state value.
 
     from urllib.parse import (
         urlparse,
@@ -315,7 +286,6 @@ def connect_gmail():
 @app.route("/oauth2callback")
 def oauth_callback():
 
-    # Get Google's returned state.
     returned_state = request.args.get(
         "state"
     )
@@ -326,7 +296,7 @@ def oauth_callback():
             "OAuth state was not returned by Google."
         )
 
-    # Verify and decode our signed OAuth state.
+    # Verify signed state.
     try:
 
         oauth_data = oauth_state_serializer.loads(
@@ -365,10 +335,17 @@ def oauth_callback():
         "code_verifier"
     )
 
-    if not original_state or not code_verifier:
+    if not original_state:
 
         return (
-            "OAuth session data is incomplete. "
+            "OAuth state data is incomplete. "
+            "Please connect Gmail again."
+        )
+
+    if not code_verifier:
+
+        return (
+            "OAuth PKCE code verifier is missing. "
             "Please connect Gmail again."
         )
 
@@ -385,15 +362,15 @@ def oauth_callback():
         _external=True
     )
 
+    # Explicitly enable PKCE here as well.
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
         state=original_state,
-        redirect_uri=redirect_uri
+        redirect_uri=redirect_uri,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=True
     )
-
-    # Restore the PKCE code verifier.
-    flow.code_verifier = code_verifier
 
     try:
 
@@ -606,7 +583,7 @@ def gmail():
 
 
 # =========================================================
-# SELECT ONE GMAIL EMAIL
+# SELECT GMAIL EMAIL
 # =========================================================
 
 @app.route("/gmail/email/<message_id>")
@@ -689,7 +666,7 @@ def select_gmail_email(message_id):
 
 
 # =========================================================
-# EXTRACT GMAIL EMAIL BODY
+# EXTRACT GMAIL BODY
 # =========================================================
 
 def extract_email_body(payload):
@@ -761,7 +738,7 @@ def extract_email_body(payload):
 
 
 # =========================================================
-# UPLOAD .EML FILE
+# UPLOAD EML
 # =========================================================
 
 @app.route(
@@ -892,7 +869,7 @@ def analyze():
 
 
     # =====================================================
-    # URGENCY DETECTION
+    # URGENCY
     # =====================================================
 
     urgency_words = [
@@ -918,7 +895,7 @@ def analyze():
 
 
     # =====================================================
-    # PAYMENT DETECTION
+    # PAYMENT
     # =====================================================
 
     payment_words = [
@@ -946,7 +923,7 @@ def analyze():
 
 
     # =====================================================
-    # ACCOUNT / CREDENTIAL DETECTION
+    # CREDENTIALS
     # =====================================================
 
     credential_words = [
@@ -972,7 +949,7 @@ def analyze():
 
 
     # =====================================================
-    # SUSPICIOUS LINK DETECTION
+    # URLS
     # =====================================================
 
     urls = re.findall(
@@ -990,7 +967,7 @@ def analyze():
 
 
     # =====================================================
-    # LINK SHORTENER DETECTION
+    # URL SHORTENERS
     # =====================================================
 
     shorteners = [
@@ -1014,7 +991,7 @@ def analyze():
 
 
     # =====================================================
-    # THREAT / MALWARE WORDS
+    # MALWARE WORDS
     # =====================================================
 
     malware_words = [
@@ -1039,7 +1016,7 @@ def analyze():
 
 
     # =====================================================
-    # THREAT LEVEL
+    # LIMIT SCORE
     # =====================================================
 
     score = min(
@@ -1047,9 +1024,15 @@ def analyze():
         100
     )
 
+
+    # =====================================================
+    # THREAT LEVEL
+    # =====================================================
+
     if score <= 24:
 
         level_class = "low"
+
         threat_name = "Low Risk"
 
         threat_description = (
@@ -1062,6 +1045,7 @@ def analyze():
     elif score <= 49:
 
         level_class = "suspicious"
+
         threat_name = "Suspicious"
 
         threat_description = (
@@ -1074,6 +1058,7 @@ def analyze():
     elif score <= 74:
 
         level_class = "high"
+
         threat_name = "High Risk"
 
         threat_description = (
@@ -1085,6 +1070,7 @@ def analyze():
     else:
 
         level_class = "critical"
+
         threat_name = "Critical Threat"
 
         threat_description = (
@@ -1095,9 +1081,9 @@ def analyze():
         )
 
 
-    # =========================================================
-    # RESULTS PAGE
-    # =========================================================
+    # =====================================================
+    # RESULTS
+    # =====================================================
 
     return render_template(
         "results.html",
@@ -1113,7 +1099,7 @@ def analyze():
 
 
 # =========================================================
-# RUN APPLICATION
+# RUN
 # =========================================================
 
 if __name__ == "__main__":
