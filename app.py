@@ -9,12 +9,12 @@ from flask import (
     render_template,
     redirect,
     url_for,
-    session,
     request,
     send_from_directory,
 )
 
 from werkzeug.middleware.proxy_fix import ProxyFix
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -37,10 +37,25 @@ if not os.environ.get("RENDER"):
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-CSS_DIR = os.path.join(STATIC_DIR, "css")
-JS_DIR = os.path.join(STATIC_DIR, "js")
+TEMPLATES_DIR = os.path.join(
+    BASE_DIR,
+    "templates"
+)
+
+STATIC_DIR = os.path.join(
+    BASE_DIR,
+    "static"
+)
+
+CSS_DIR = os.path.join(
+    STATIC_DIR,
+    "css"
+)
+
+JS_DIR = os.path.join(
+    STATIC_DIR,
+    "js"
+)
 
 
 # =========================================================
@@ -77,6 +92,25 @@ if os.environ.get("RENDER"):
 
 
 # =========================================================
+# OAUTH STATE SECURITY
+# =========================================================
+
+# We do NOT depend on the Flask session for OAuth state.
+#
+# The OAuth state and PKCE code verifier are securely signed
+# using the Flask secret key and sent through Google's OAuth
+# state parameter.
+#
+# This avoids the production session-cookie problem that was
+# causing "OAuth session expired".
+
+oauth_state_serializer = URLSafeTimedSerializer(
+    app.secret_key,
+    salt="maldetector-oauth-state"
+)
+
+
+# =========================================================
 # GOOGLE GMAIL SCOPES
 # =========================================================
 
@@ -95,16 +129,24 @@ def get_google_client_config():
     For local development, credentials.json can still be used.
     """
 
-    client_id = os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    client_id = os.environ.get(
+        "GOOGLE_CLIENT_ID"
+    )
+
+    client_secret = os.environ.get(
+        "GOOGLE_CLIENT_SECRET"
+    )
 
     if client_id and client_secret:
+
         return {
             "web": {
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_uri":
+                    "https://accounts.google.com/o/oauth2/auth",
+                "token_uri":
+                    "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url":
                     "https://www.googleapis.com/oauth2/v1/certs"
             }
@@ -117,6 +159,7 @@ def get_google_client_config():
     )
 
     if os.path.exists(credentials_path):
+
         import json
 
         with open(
@@ -124,6 +167,7 @@ def get_google_client_config():
             "r",
             encoding="utf-8"
         ) as file:
+
             return json.load(file)
 
     return None
@@ -135,6 +179,7 @@ def get_google_client_config():
 
 @app.route("/css/<path:filename>")
 def css_file(filename):
+
     return send_from_directory(
         CSS_DIR,
         filename
@@ -147,6 +192,7 @@ def css_file(filename):
 
 @app.route("/js/<path:filename>")
 def js_file(filename):
+
     return send_from_directory(
         JS_DIR,
         filename
@@ -159,6 +205,7 @@ def js_file(filename):
 
 @app.route("/")
 def home():
+
     return render_template(
         "index.html"
     )
@@ -174,6 +221,7 @@ def connect_gmail():
     client_config = get_google_client_config()
 
     if not client_config:
+
         return (
             "Google OAuth configuration was not found."
         )
@@ -189,14 +237,71 @@ def connect_gmail():
         redirect_uri=redirect_uri
     )
 
-    authorization_url, state = flow.authorization_url(
-        access_type="offline",
-        prompt="consent",
-        include_granted_scopes="true"
+    # Generate the PKCE code verifier.
+    #
+    # Flow.authorization_url() creates one automatically
+    # when PKCE is being used.
+    authorization_url, generated_state = (
+        flow.authorization_url(
+            access_type="offline",
+            prompt="consent",
+            include_granted_scopes="true"
+        )
     )
 
-    session["state"] = state
-    session["code_verifier"] = flow.code_verifier
+    # The generated OAuth state is signed together with the
+    # PKCE code verifier.
+    #
+    # This replaces:
+    #
+    # session["state"]
+    # session["code_verifier"]
+    #
+    # which was the source of the production problem.
+
+    signed_state = oauth_state_serializer.dumps({
+        "state": generated_state,
+        "code_verifier": flow.code_verifier
+    })
+
+    # Replace the state parameter in Google's authorization
+    # URL with our signed state.
+    #
+    # authorization_url already contains ?state=...
+    # so replace only that generated state value.
+
+    from urllib.parse import (
+        urlparse,
+        parse_qs,
+        urlencode,
+        urlunparse
+    )
+
+    parsed_url = urlparse(
+        authorization_url
+    )
+
+    query_params = parse_qs(
+        parsed_url.query
+    )
+
+    query_params["state"] = [
+        signed_state
+    ]
+
+    authorization_url = urlunparse(
+        (
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            urlencode(
+                query_params,
+                doseq=True
+            ),
+            parsed_url.fragment
+        )
+    )
 
     return redirect(
         authorization_url
@@ -210,18 +315,66 @@ def connect_gmail():
 @app.route("/oauth2callback")
 def oauth_callback():
 
-    state = session.get("state")
-    code_verifier = session.get("code_verifier")
+    # Get Google's returned state.
+    returned_state = request.args.get(
+        "state"
+    )
 
-    if not state or not code_verifier:
+    if not returned_state:
+
+        return (
+            "OAuth state was not returned by Google."
+        )
+
+    # Verify and decode our signed OAuth state.
+    try:
+
+        oauth_data = oauth_state_serializer.loads(
+            returned_state,
+            max_age=600
+        )
+
+    except SignatureExpired:
+
         return (
             "OAuth session expired. "
+            "Please connect Gmail again."
+        )
+
+    except BadSignature:
+
+        return (
+            "Invalid OAuth session. "
+            "Please connect Gmail again."
+        )
+
+    except Exception as error:
+
+        return (
+            "Unable to verify OAuth session."
+            "<br><br>"
+            f"Error: {error}"
+        )
+
+    original_state = oauth_data.get(
+        "state"
+    )
+
+    code_verifier = oauth_data.get(
+        "code_verifier"
+    )
+
+    if not original_state or not code_verifier:
+
+        return (
+            "OAuth session data is incomplete. "
             "Please connect Gmail again."
         )
 
     client_config = get_google_client_config()
 
     if not client_config:
+
         return (
             "Google OAuth configuration was not found."
         )
@@ -234,18 +387,21 @@ def oauth_callback():
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        state=state,
+        state=original_state,
         redirect_uri=redirect_uri
     )
 
+    # Restore the PKCE code verifier.
     flow.code_verifier = code_verifier
 
     try:
+
         flow.fetch_token(
             authorization_response=request.url
         )
 
     except Exception as error:
+
         return (
             "Unable to complete Google authentication."
             "<br><br>"
@@ -254,30 +410,34 @@ def oauth_callback():
 
     credentials = flow.credentials
 
+    # =====================================================
+    # SAVE GMAIL TOKEN
+    # =====================================================
+
     token_path = os.path.join(
         BASE_DIR,
         "token.json"
     )
 
     try:
+
         with open(
             token_path,
             "w",
             encoding="utf-8"
         ) as token:
+
             token.write(
                 credentials.to_json()
             )
 
     except Exception as error:
+
         return (
             "Unable to save Gmail authentication."
             "<br><br>"
             f"Error: {error}"
         )
-
-    session.pop("state", None)
-    session.pop("code_verifier", None)
 
     return redirect(
         url_for("gmail")
@@ -295,10 +455,14 @@ def get_gmail_credentials():
         "token.json"
     )
 
-    if not os.path.exists(token_path):
+    if not os.path.exists(
+        token_path
+    ):
+
         return None
 
     try:
+
         credentials = Credentials.from_authorized_user_file(
             token_path,
             SCOPES
@@ -307,6 +471,7 @@ def get_gmail_credentials():
         return credentials
 
     except Exception:
+
         return None
 
 
@@ -320,11 +485,13 @@ def gmail():
     credentials = get_gmail_credentials()
 
     if not credentials:
+
         return redirect(
             url_for("connect_gmail")
         )
 
     try:
+
         service = build(
             "gmail",
             "v1",
@@ -336,6 +503,7 @@ def gmail():
         )
 
         if page_token:
+
             results = service.users().messages().list(
                 userId="me",
                 maxResults=20,
@@ -343,12 +511,14 @@ def gmail():
             ).execute()
 
         else:
+
             results = service.users().messages().list(
                 userId="me",
                 maxResults=20
             ).execute()
 
     except Exception as error:
+
         return (
             "Unable to access Gmail."
             "<br><br>"
@@ -365,6 +535,7 @@ def gmail():
     for message in messages:
 
         try:
+
             message_data = service.users().messages().get(
                 userId="me",
                 id=message["id"],
@@ -394,16 +565,19 @@ def gmail():
                 ].lower()
 
                 if name == "from":
+
                     sender = header[
                         "value"
                     ]
 
                 elif name == "subject":
+
                     subject = header[
                         "value"
                     ]
 
                 elif name == "date":
+
                     date = header[
                         "value"
                     ]
@@ -416,6 +590,7 @@ def gmail():
             })
 
         except Exception:
+
             continue
 
     next_page_token = results.get(
@@ -439,11 +614,13 @@ def select_gmail_email(message_id):
     credentials = get_gmail_credentials()
 
     if not credentials:
+
         return redirect(
             url_for("connect_gmail")
         )
 
     try:
+
         service = build(
             "gmail",
             "v1",
@@ -457,6 +634,7 @@ def select_gmail_email(message_id):
         ).execute()
 
     except Exception as error:
+
         return (
             "Unable to retrieve this email."
             "<br><br>"
@@ -496,6 +674,7 @@ def select_gmail_email(message_id):
     )
 
     if not body:
+
         body = (
             "Email body could not be extracted."
         )
@@ -535,6 +714,7 @@ def extract_email_body(payload):
                 )
 
                 if data:
+
                     body = base64.urlsafe_b64decode(
                         data
                     ).decode(
@@ -543,6 +723,7 @@ def extract_email_body(payload):
                     )
 
                 if body:
+
                     break
 
             elif mime_type.startswith(
@@ -554,6 +735,7 @@ def extract_email_body(payload):
                 )
 
                 if body:
+
                     break
 
     else:
@@ -566,6 +748,7 @@ def extract_email_body(payload):
         )
 
         if data:
+
             body = base64.urlsafe_b64decode(
                 data
             ).decode(
@@ -591,14 +774,17 @@ def upload_email():
     )
 
     if not uploaded_file:
+
         return "No file selected."
 
     if uploaded_file.filename == "":
+
         return "No file selected."
 
     if not uploaded_file.filename.lower().endswith(
         ".eml"
     ):
+
         return "Only .eml files are allowed."
 
     try:
@@ -638,23 +824,29 @@ def upload_email():
             if part.get_content_type() == "text/plain":
 
                 try:
+
                     body = part.get_content()
 
                 except Exception:
+
                     body = ""
 
                 if body:
+
                     break
 
     else:
 
         try:
+
             body = msg.get_content()
 
         except Exception:
+
             body = ""
 
     if not body:
+
         body = (
             "Email body could not be extracted."
         )
