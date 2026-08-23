@@ -24,8 +24,8 @@ from google.oauth2.credentials import Credentials
 # =========================================================
 
 # Only allow HTTP OAuth for local development.
-# Render uses HTTPS.
-if os.environ.get("RENDER") != "true":
+# Render uses HTTPS, so this is not enabled there.
+if not os.environ.get("RENDER"):
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 
@@ -66,16 +66,14 @@ app = Flask(
     template_folder=TEMPLATES_DIR
 )
 
-# FIX: Use a stable secret key for Flask sessions.
-# Render Environment Variable:
-# FLASK_SECRET_KEY
+# Your existing Flask secret key setup — DO NOT CHANGE
 app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY",
     "maldetector-local-secret-key"
 )
 
 # Secure cookies when running on Render
-if os.environ.get("RENDER") == "true":
+if os.environ.get("RENDER"):
     app.config.update(
         SESSION_COOKIE_SECURE=True,
         SESSION_COOKIE_HTTPONLY=True,
@@ -181,7 +179,9 @@ def connect_gmail():
     client_config = get_google_client_config()
 
     if not client_config:
-        return "Google OAuth configuration was not found."
+        return (
+            "Google OAuth configuration was not found."
+        )
 
     redirect_uri = url_for(
         "oauth_callback",
@@ -200,12 +200,8 @@ def connect_gmail():
         include_granted_scopes="true"
     )
 
-    # Store OAuth information in Flask session
     session["state"] = state
     session["code_verifier"] = flow.code_verifier
-
-    # Make sure session is saved before redirecting to Google
-    session.modified = True
 
     return redirect(
         authorization_url
@@ -274,7 +270,6 @@ def oauth_callback():
             "w",
             encoding="utf-8"
         ) as token:
-
             token.write(
                 credentials.to_json()
             )
@@ -286,7 +281,6 @@ def oauth_callback():
             f"Error: {error}"
         )
 
-    # Remove temporary OAuth session data
     session.pop("state", None)
     session.pop("code_verifier", None)
 
@@ -310,7 +304,6 @@ def get_gmail_credentials():
         return None
 
     try:
-
         credentials = Credentials.from_authorized_user_file(
             token_path,
             SCOPES
@@ -337,7 +330,6 @@ def gmail():
         )
 
     try:
-
         service = build(
             "gmail",
             "v1",
@@ -349,7 +341,6 @@ def gmail():
         )
 
         if page_token:
-
             results = service.users().messages().list(
                 userId="me",
                 maxResults=20,
@@ -357,14 +348,12 @@ def gmail():
             ).execute()
 
         else:
-
             results = service.users().messages().list(
                 userId="me",
                 maxResults=20
             ).execute()
 
     except Exception as error:
-
         return (
             "Unable to access Gmail."
             "<br><br>"
@@ -381,7 +370,6 @@ def gmail():
     for message in messages:
 
         try:
-
             message_data = service.users().messages().get(
                 userId="me",
                 id=message["id"],
@@ -411,19 +399,16 @@ def gmail():
                 ].lower()
 
                 if name == "from":
-
                     sender = header[
                         "value"
                     ]
 
                 elif name == "subject":
-
                     subject = header[
                         "value"
                     ]
 
                 elif name == "date":
-
                     date = header[
                         "value"
                     ]
@@ -464,7 +449,6 @@ def select_gmail_email(message_id):
         )
 
     try:
-
         service = build(
             "gmail",
             "v1",
@@ -478,7 +462,6 @@ def select_gmail_email(message_id):
         ).execute()
 
     except Exception as error:
-
         return (
             "Unable to retrieve this email."
             "<br><br>"
@@ -557,7 +540,6 @@ def extract_email_body(payload):
                 )
 
                 if data:
-
                     body = base64.urlsafe_b64decode(
                         data
                     ).decode(
@@ -589,7 +571,6 @@ def extract_email_body(payload):
         )
 
         if data:
-
             body = base64.urlsafe_b64decode(
                 data
             ).decode(
@@ -679,7 +660,6 @@ def upload_email():
             body = ""
 
     if not body:
-
         body = (
             "Email body could not be extracted."
         )
